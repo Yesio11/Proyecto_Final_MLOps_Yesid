@@ -1,13 +1,13 @@
 import pandas as pd
 import mlflow
 import optuna
-import numpy as np # NUEVO
-from sklearn.model_selection import train_test_split, cross_val_score # NUEVO
+import numpy as np
+from sklearn.model_selection import train_test_split, cross_validate
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score
+from imblearn.ensemble import BalancedRandomForestClassifier
+from sklearn.metrics import accuracy_score, recall_score, make_scorer
 
 class TrainMlflowOptuna:
     def __init__(self, df: pd.DataFrame, target_column: str, n_trials: int = 25):
@@ -15,7 +15,7 @@ class TrainMlflowOptuna:
         self.target_column = target_column
         self.n_trials = n_trials
 
-    def _objective(self, trial, X_train, y_train): # NUEVO: Ya no necesitamos X_test, y_test aquí
+    def _objective(self, trial, X_train, y_train):
         """
         Función objetivo que Optuna intentará maximizar usando Validación Cruzada.
         """
@@ -35,10 +35,10 @@ class TrainMlflowOptuna:
                 ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
             ])
         
-        # Creamos el pipeline con el modelo RandomForestClassifier
+        # Creamos el pipeline con el modelo BalancedRandomForestClassifier
         model_pipeline = Pipeline(steps=[
             ('preprocessor', preprocessor),
-            ('classifier', RandomForestClassifier(
+            ('classifier', BalancedRandomForestClassifier(
                 n_estimators=n_estimators,
                 max_depth=max_depth,
                 min_samples_split=min_samples_split,
@@ -47,34 +47,86 @@ class TrainMlflowOptuna:
             ))
         ])
         
-        # NUEVO: Usamos validación cruzada con 5 divisiones (folds)
-        # Esto entrena y evalúa el modelo 5 veces en diferentes subconjuntos de los datos de entrenamiento
-        scores = cross_val_score(model_pipeline, X_train, y_train, cv=5, scoring='accuracy')
+        # Usamos validación cruzada con 5 folds y múltiples métricas
+        scoring = {
+            'accuracy': 'accuracy',
+            'recall_bad_risk': make_scorer(recall_score, pos_label=2)
+        }
         
-        # Devolvemos el promedio de los scores
-        return np.mean(scores)
+        scores = cross_validate(model_pipeline, X_train, y_train, cv=5, scoring=scoring)
+
+        # Log de métricas a MLflow
+        trial.set_user_attr("recall_cv_mean", np.mean(scores['test_recall_bad_risk']))
+
+        # Optuna maximizará el accuracy
+        return np.mean(scores['test_accuracy'])
 
     def train(self):
         print("Iniciando optimización con Validación Cruzada, Optuna y MLflow...")
         X = self.df.drop(columns=[self.target_column])
         y = self.df[self.target_column]
-        # Todavía hacemos un split inicial para tener un conjunto de prueba final si lo necesitáramos,
-        # pero la optimización se hará solo sobre el conjunto de entrenamiento (X_train, y_train).
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         
         study = optuna.create_study(direction='maximize')
-        with mlflow.start_run(run_name='Optuna_Parent_Run_CV_RF') as parent_run:
+        with mlflow.start_run(run_name='Optuna_Parent_Run_CV_BRF') as parent_run: # Changed run name
             study.optimize(
                 lambda trial: self._objective_with_mlflow(trial, X_train, y_train, parent_run.info.run_id), 
                 n_trials=self.n_trials
             )
-        print(f"\nOptimización completada. Mejor accuracy (promedio CV): {study.best_value:.4f}")
+
+        print(f"\nOptimización completada.")
+        print(f"Mejor accuracy (promedio CV): {study.best_value:.4f}")
+
+        # Obtenemos el recall del mejor trial
+        best_recall = study.best_trial.user_attrs.get("recall_cv_mean", "N/A")
+        if isinstance(best_recall, float):
+            print(f"Mejor recall para 'Bad Risk' (promedio CV): {best_recall:.4f}")
+        else:
+            print(f"Recall no disponible para el mejor trial.")
+
         print(f"Mejores hiperparámetros: {study.best_params}")
+
+        # Entrenar y evaluar el modelo final con los mejores hiperparámetros
+        print("\nEntrenando el modelo final con los mejores hiperparámetros en el conjunto de entrenamiento completo...")
+        best_params = study.best_params
+        numeric_features = X_train.select_dtypes(include=['int64', 'float64']).columns
+        categorical_features = X_train.select_dtypes(include=['object']).columns
+
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('num', StandardScaler(), numeric_features),
+                ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
+            ])
+
+        final_model_pipeline = Pipeline(steps=[
+            ('preprocessor', preprocessor),
+            ('classifier', BalancedRandomForestClassifier(
+                **best_params,
+                random_state=42,
+                n_jobs=-1
+            ))
+        ])
+
+        final_model_pipeline.fit(X_train, y_train)
+        y_pred = final_model_pipeline.predict(X_test)
+
+        final_accuracy = accuracy_score(y_test, y_pred)
+        final_recall = recall_score(y_test, y_pred, pos_label=2)
+
+        print("\n--- Métricas del Modelo Final en el Conjunto de Prueba ---")
+        print(f"Accuracy: {final_accuracy:.4f}")
+        print(f"Recall para 'Bad Risk' (Clase 2): {final_recall:.4f}")
+        print("----------------------------------------------------------")
+
         return study.best_params, study.best_value
 
     def _objective_with_mlflow(self, trial, X_train, y_train, parent_run_id):
         with mlflow.start_run(run_name=f"trial_{trial.number}", nested=True, experiment_id=mlflow.get_experiment_by_name("Default").experiment_id) as run:
-            # NUEVO: Pasamos solo los datos de entrenamiento
             accuracy = self._objective(trial, X_train, y_train)
-            mlflow.log_metric("accuracy_cv_mean", accuracy) # Nombramos la métrica para que sea claro que es de CV
+            recall = trial.user_attrs.get("recall_cv_mean", 0) # Recuperamos el recall
+
+            mlflow.log_metric("accuracy_cv_mean", accuracy)
+            mlflow.log_metric("recall_cv_mean", recall)
+            mlflow.log_params(trial.params)
+
             return accuracy
