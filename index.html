@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Predictor de Riesgo Crediticio</title>
+    <style>
+        body { font-family: sans-serif; background-color: #f4f4f9; color: #333; margin: 2em; }
+        .container { max-width: 800px; margin: auto; background: white; padding: 2em; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #4a4a4a; }
+        form { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2em; }
+        .form-group { display: contents; } /* Helper for grid layout */
+        label { font-weight: bold; align-self: center; }
+        input, select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { grid-column: 1 / -1; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+        #resultado { margin-top: 1.5em; text-align: center; font-size: 1.2em; font-weight: bold; padding: 1em; border-radius: 4px; }
+        .bueno { background-color: #d4edda; color: #155724; }
+        .malo { background-color: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Formulario de Solicitud de Crédito</h1>
+        <form id="credit-form">
+            
+            <div class="form-group">
+                <label for="monto_credito">Monto del Crédito:</label>
+                <input type="number" id="monto_credito" name="monto_credito" required value="2500">
+            </div>
+
+            <div class="form-group">
+                <label for="duracion_credito_meses">Duración (meses):</label>
+                <input type="number" id="duracion_credito_meses" name="duracion_credito_meses" required value="24">
+            </div>
+
+            <div class="form-group">
+                <label for="edad">Edad:</label>
+                <input type="number" id="edad" name="edad" required value="35">
+            </div>
+
+            <div class="form-group">
+                 <label for="tasa_de_cuotas">Tasa de Cuotas (%):</label>
+                <input type="number" id="tasa_de_cuotas" name="tasa_de_cuotas" required value="4">
+            </div>
+
+            <div class="form-group">
+                <label for="estado_cuenta_actual">Estado Cuenta Actual:</label>
+                <select id="estado_cuenta_actual" name="estado_cuenta_actual">
+                    <option value="A11">... < 0 DM</option>
+                    <option value="A12">0 <= ... < 200 DM</option>
+                    <option value="A13">... >= 200 DM / ...</option>
+                    <option value="A14" selected>no checking account</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="historial_credito">Historial de Crédito:</label>
+                <select id="historial_credito" name="historial_credito">
+                    <option value="A34" selected>créditos pagados debidamente</option>
+                    <option value="A32">créditos en este banco pagados</option>
+                    <option value="A33">retrasos en pagos</option>
+                    <option value="A30">cuenta crítica</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="proposito_credito">Propósito del Crédito:</label>
+                <select id="proposito_credito" name="proposito_credito">
+                    <option value="A40">Auto (nuevo)</option>
+                    <option value="A41">Auto (usado)</option>
+                    <option value="A43" selected>Radio/Televisión</option>
+                    <option value="A42">Mobiliario/Equipo</option>
+                    <option value="A46">Educación</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="ahorros_o_bonos">Ahorros:</label>
+                <select id="ahorros_o_bonos" name="ahorros_o_bonos">
+                    <option value="A61" selected>... < 100 DM</option>
+                    <option value="A62">100 <= ... < 500 DM</option>
+                    <option value="A65">sin ahorros</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="tiempo_empleo">Tiempo de Empleo:</label>
+                <select id="tiempo_empleo" name="tiempo_empleo">
+                    <option value="A71">desempleado</option>
+                    <option value="A73" selected>1 <= ... < 4 años</option>
+                    <option value="A75">>= 7 años</option>
+                </select>
+            </div>
+
+             <div class="form-group">
+                <label for="vivienda">Vivienda:</label>
+                <select id="vivienda" name="vivienda">
+                    <option value="A151">Alquiler</option>
+                    <option value="A152" selected>Propia</option>
+                    <option value="A153">Gratis</option>
+                </select>
+            </div>
+            
+            <button type="submit">Predecir Riesgo</button>
+        </form>
+
+        <div id="resultado"></div>
+    </div>
+
+    <script>
+        const form = document.getElementById('credit-form');
+        const resultadoDiv = document.getElementById('resultado');
+
+        form.addEventListener('submit', async function(event) {
+            event.preventDefault();
+
+            const formData = new FormData(form);
+            const data = Object.fromEntries(formData.entries());
+
+            const numericFields = ['monto_credito', 'duracion_credito_meses', 'edad', 'tasa_de_cuotas', 'tiempo_residencia_actual', 'numero_creditos_existentes', 'numero_personas_dependientes'];
+            numericFields.forEach(field => {
+                if (data[field]) data[field] = parseFloat(data[field]);
+            });
+
+            // Llenar campos faltantes con valores por defecto para completar el request
+            const defaults = {
+                "estado_civil_y_sexo": "A93", "otros_deudores_o_garantes": "A101",
+                "tiempo_residencia_actual": 2, "propiedad": "A121",
+                "otros_planes_cuotas": "A143", "numero_creditos_existentes": 1,
+                "trabajo": "A173", "numero_personas_dependientes": 1,
+                "telefono": "A191", "trabajador_extranjero": "A201",
+                "monto_por_mes": data.monto_credito / data.duracion_credito_meses,
+                "proporcion_credito_edad": data.monto_credito / data.edad
+            };
+
+            for (const key in defaults) {
+                if (!data[key]) {
+                    data[key] = defaults[key];
+                }
+            }
+
+            resultadoDiv.textContent = 'Procesando...';
+            resultadoDiv.className = '';
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                if (response.status === 422) {
+                    const errorDetail = await response.json();
+                    throw new Error(`Datos inválidos. FastAPI dice: ${JSON.stringify(errorDetail)}`);
+                }
+                if (!response.ok) {
+                    throw new Error(`Error del servidor: ${response.status}`);
+                }
+
+                const result = await response.json();
+                
+                resultadoDiv.textContent = `Resultado: ${result.prediccion_riesgo}`;
+                resultadoDiv.classList.add(result.prediccion_riesgo === 'Buen Riesgo' ? 'bueno' : 'malo');
+
+            } catch (error) {
+                resultadoDiv.textContent = `Error: ${error.message}`;
+                resultadoDiv.classList.add('malo');
+            }
+        });
+    </script>
+
+</body>
+</html>

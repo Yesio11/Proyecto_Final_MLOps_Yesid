@@ -2,6 +2,8 @@ import pandas as pd
 import mlflow
 import optuna
 import numpy as np
+import joblib
+import os
 from sklearn.model_selection import cross_val_score
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
@@ -82,6 +84,13 @@ class TrainMlflowOptuna:
                 input_example=X.head(5)
             )
             
+            
             print("Modelo final entrenado y guardado en MLflow exitosamente.")
+
+            print("Guardando el modelo en la carpeta local 'models'...")
+            os.makedirs('models', exist_ok=True) # Crea la carpeta si no existe
+            joblib.dump(final_pipeline, 'models/credit_risk_model.joblib')
+            print("Modelo guardado exitosamente como 'credit_risk_model.joblib'.")
+            # ---------------------------------------------------------
         
-        return best_params, best_score
+        return best_params, study.best_value
